@@ -259,6 +259,7 @@ def main():
     total_distance = 0
 
     for gpx_file in sorted(args.gpxfile):
+        print('processing', gpx_file)
         t = xml.etree.ElementTree.parse(gpx_file)
 
        # Runkeeper-specific filter on runs (as opposed to bike rides, etc.);
@@ -290,13 +291,13 @@ def main():
             if not empty(segment):
                 segment_distance = sum_segment_distance(segment)
                 total_distance += segment_distance
-                print('segment distance', segment_distance)
+                print('segment distance {:0.1f} miles'.format(segment_distance))
                 if master_tree:
                     master_tree.getroot().append(segment)
                 else:
                     master_tree = t
 
-    print('total distance', total_distance)
+    print('total distance {:0.1f} miles'.format(total_distance))
 
     with open(args.out, 'wb') as out:
         master_tree.write(out, xml_declaration=True)
