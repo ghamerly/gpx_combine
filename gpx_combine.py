@@ -6,7 +6,7 @@ worked on data from Strava.
 
 This script has two primary purposes:
     1. Combine many GPX files into one (with separate tracks) so that the one
-    file can be uploaded / visualized. 
+    file can be uploaded / visualized.
 
     2. Remove / filter waypoints and/or data that we don't need, in order to
     save space. In my testing, this regularly saves about 90%. The purpose for
@@ -22,17 +22,19 @@ GPX file exported from RunKeeper:
       creator="Runkeeper - http://www.runkeeper.com"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xmlns="http://www.topografix.com/GPX/1/1"
-      xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd"
+      xsi:schemaLocation="http://www.topografix.com/GPX/1/1
+                          http://www.topografix.com/GPX/1/1/gpx.xsd"
       xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
     <trk>
       <name><![CDATA[Running 4/13/20 6:58 am]]></name>
       <time>2020-04-13T11:58:19Z</time>
     <trkseg>
-    <trkpt lat="27.806221000" lon="-100.935776000"><ele>188.2</ele><time>2020-04-13T11:58:19Z</time></trkpt>
-    <trkpt lat="27.806253000" lon="-100.935881000"><ele>188.3</ele><time>2020-04-13T11:58:23Z</time></trkpt>
-    <trkpt lat="27.806169000" lon="-100.935909000"><ele>188.4</ele><time>2020-04-13T11:58:29Z</time></trkpt>
-    <trkpt lat="27.806102000" lon="-100.935826000"><ele>188.4</ele><time>2020-04-13T11:58:33Z</time></trkpt>
-    <trkpt lat="27.806029000" lon="-100.935760000"><ele>188.5</ele><time>2020-04-13T11:58:36Z</time></trkpt>
+    <trkpt lat="27.806221000" lon="-100.935776000">
+        <ele>188.2</ele><time>2020-04-13T11:58:19Z</time></trkpt>
+    <trkpt lat="27.806253000" lon="-100.935881000">
+        <ele>188.3</ele><time>2020-04-13T11:58:23Z</time></trkpt>
+    <trkpt lat="27.806169000" lon="-100.935909000">
+        <ele>188.4</ele><time>2020-04-13T11:58:29Z</time></trkpt>
     [snip]
     </trkseg>
     </trk>
@@ -59,18 +61,20 @@ import argparse
 import math
 import xml.etree.ElementTree
 
-def haversine(lon1, lat1, lon2, lat2):
-    '''Compute great circle distances using the Haversine formulation
-       See: https://medium.com/@petehouston/calculate-distance-of-two-locations-on-earth-using-python-1501b1944d97
-       '''
+
+EARTH_RADIUS_MILES = 3958.756
+EARTH_RADIUS_KILOMETERS = 6371
+
+def haversine(lon1, lat1, lon2, lat2, earth_radius=EARTH_RADIUS_MILES):
+    '''Compute great circle distances using the Haversine formulation; see:
+    https://en.wikipedia.org/wiki/Haversine_formula
+    '''
     lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
-
-    RADIUS_MILES = 3958.756
-    #RADIUS_KILOMETERS = 6371
-    return 2 * RADIUS_MILES * math.asin(math.sqrt(a))
+    sin, cos = math.sin, math.cos
+    hav = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 2 * earth_radius * math.asin(math.sqrt(hav))
 
 def _remove_all(parent, child):
     '''Function that simply removes the child XML element from the parent.'''
@@ -84,55 +88,59 @@ def _iterate_over(segment, search, functor):
     for parent in segment.getiterator():
         for child in parent.findall('{http://www.topografix.com/GPX/1/1}' + search):
             result = functor(parent, child)
-            if result == False:
+            if result is False:
                 return
 
 def sum_segment_distance(segment):
-    s = 0
-    last = None
+    '''Sum the distance along a segment using the Haversine formula. Assumes
+    miles.'''
 
-    def _sum_functor(parent, child):
-        nonlocal s, last
+    total_distance = 0
+    last = None, None
+
+    def _sum_functor(_, child):
+        nonlocal total_distance, last
+        lat1, lon1 = last
         lat2, lon2 = latlon(child)
-        if last is not None:
-            lat1, lon1 = last
-            s += haversine(lon1, lat1, lon2, lat2)
+        if lat1 is not None:
+            total_distance += haversine(lon1, lat1, lon2, lat2)
         last = (lat2, lon2)
 
     _iterate_over(segment, 'trkpt', _sum_functor)
 
-    return s
+    return total_distance
 
 def latlon(waypt):
+    '''Split an XML waypoint into a (lat, lon) pair.'''
     return float(waypt.attrib['lat']), float(waypt.attrib['lon'])
 
-def cross(a, b, c):
+def cross(p_a, p_b, p_c):
     '''Compute the cross product of the angle connecting a->b->c.
 
     Here a, b, c are XML elements that have lat & lon attributes.'''
 
-    alat, alon = latlon(a)
-    blat, blon = latlon(b)
-    clat, clon = latlon(c)
+    a_lat, a_lon = latlon(p_a)
+    b_lat, b_lon = latlon(p_b)
+    c_lat, c_lon = latlon(p_c)
 
-    ab = [blat - alat, blon - alon]
-    bc = [clat - blat, clon - blon]
+    a_b = [b_lat - a_lat, b_lon - a_lon]
+    b_c = [c_lat - b_lat, c_lon - b_lon]
 
-    return ab[0] * bc[1] - ab[1] * bc[0]
+    return a_b[0] * b_c[1] - a_b[1] * b_c[0]
 
-def dot(a, b, c):
+def dot(p_a, p_b, p_c):
     '''Compute the dot product of the angle connecting a->b->c.
 
     Here a, b, c are XML elements that have lat & lon attributes.'''
 
-    alat, alon = latlon(a)
-    blat, blon = latlon(b)
-    clat, clon = latlon(c)
+    a_lat, a_lon = latlon(p_a)
+    b_lat, b_lon = latlon(p_b)
+    c_lat, c_lon = latlon(p_c)
 
-    ab = [blat - alat, blon - alon]
-    bc = [clat - blat, clon - blon]
+    a_b = [b_lat - a_lat, b_lon - a_lon]
+    b_c = [c_lat - b_lat, c_lon - b_lon]
 
-    return ab[0] * bc[0] + ab[1] * bc[1]
+    return a_b[0] * b_c[0] + a_b[1] * b_c[1]
 
 def linearize(segment, tol):
     '''Simple approach for removing points from a segment that are linear with
@@ -146,13 +154,15 @@ def linearize(segment, tol):
 
     def _f(parent, child):
         nonlocal path, count
-        while 2 <= len(path) and 0 < dot(path[-2][1], path[-1][1], child) and abs(cross(path[-2][1], path[-1][1], child)) <= tol:
-            pp, pc = path.pop()
-            pp.remove(pc)
+        while len(path) >= 2 and \
+            dot(path[-2][1], path[-1][1], child) > 0 and \
+            abs(cross(path[-2][1], path[-1][1], child)) <= tol:
+            path_parent, current = path.pop()
+            path_parent.remove(current)
 
         count += 1
         path.append((parent, child))
-            
+
     _iterate_over(segment, 'trkpt', _f)
 
     if len(path) != count:
@@ -163,10 +173,9 @@ def keepevery(segment, k):
     count = removed = 0
 
     def _f(parent, child):
-        nonlocal count
-        nonlocal removed
+        nonlocal count, removed
         count += 1
-        if 0 != (count % k):
+        if count % k:
             parent.remove(child)
             removed += 1
 
@@ -211,7 +220,7 @@ def stripelevation(segment):
 
 def striptrailingzeros(segment):
     '''Remove trailing zeros from lat/lon values.'''
-    def _f(parent, child):
+    def _f(_, child):
         child.attrib['lat'] = child.attrib['lat'].rstrip('0')
         child.attrib['lon'] = child.attrib['lon'].rstrip('0')
     _iterate_over(segment, 'trkpt', _f)
@@ -221,7 +230,7 @@ def empty(segment):
 
     no_trkpts = True
 
-    def _f(parent, child):
+    def _f(_, __):
         nonlocal no_trkpts
         no_trkpts = False
         return False # stop looking, we found a trkpt
@@ -231,23 +240,34 @@ def empty(segment):
     return no_trkpts
 
 def main():
+    '''Read in a number of GPX files named on the command line, filter and
+    simplify them, and combine them into one output.'''
+
     # this is to fix the output namespace at the end -- see
     # https://stackoverflow.com/a/18340978
     xml.etree.ElementTree.register_namespace('', 'http://www.topografix.com/GPX/1/1')
 
     parser = argparse.ArgumentParser(
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('gpxfile', nargs='+')
     parser.add_argument('--out', default='combined.gpx')
 
     filter_group = parser.add_argument_group('Filters on what is kept')
-    filter_group.add_argument('--keepevery', type=int, default=1, help='Keep 1/N of all track points')
-    filter_group.add_argument('--nolinearize', dest='linearize', action='store_false', default=True, help='Do not discard intermediate points for linear segments (using the given tolerance)')
-    filter_group.add_argument('--linearizetol', type=float, default=1.5e-8, help='Tolerance for linearization (smaller = keep more points)')
-    filter_group.add_argument('--striptime', action='store_true', default=False, help='Remove timestamps')
-    filter_group.add_argument('--nostripelevation', dest='stripelevation', action='store_false', default=True, help='Do not remove elevation')
-    filter_group.add_argument('--nostriptrailingzeros', dest='striptrailingzeros', action='store_false', default=True, help='Do not strip trailing zeros from lat/long')
-    filter_group.add_argument('--nostripextensions', dest='stripextensions', action='store_false', default=True, help='Do not strip "extension" tag data')
+    filter_group.add_argument('--keepevery', type=int, default=1,
+                              help='Keep 1/N of all track points')
+    filter_group.add_argument('--nolinearize', dest='linearize', action='store_false', default=True,
+                              help="Don't discard intermediate linear points (uses tolerance)")
+    filter_group.add_argument('--linearizetol', type=float, default=1.5e-8,
+                              help='Tolerance for linearization (smaller = keep more points)')
+    filter_group.add_argument('--striptime', action='store_true', default=False,
+                              help='Remove timestamps')
+    filter_group.add_argument('--nostripelevation', dest='stripelevation', action='store_false',
+                              default=True, help='Do not remove elevation')
+    filter_group.add_argument('--nostriptrailingzeros', dest='striptrailingzeros',
+                              action='store_false', default=True,
+                              help='Do not strip trailing zeros from lat/long')
+    filter_group.add_argument('--nostripextensions', dest='stripextensions', action='store_false',
+                              default=True, help='Do not strip "extension" tag data')
     filter_group.add_argument('--latrange', nargs=2, type=float, default=[31, 32])
     filter_group.add_argument('--lonrange', nargs=2, type=float, default=[-98, -97])
 
@@ -260,18 +280,18 @@ def main():
 
     for gpx_file in sorted(args.gpxfile):
         print('processing', gpx_file)
-        t = xml.etree.ElementTree.parse(gpx_file)
+        tree = xml.etree.ElementTree.parse(gpx_file)
 
        # Runkeeper-specific filter on runs (as opposed to bike rides, etc.);
        # Commented out because it does not work for other sources (e.g. strava).
        # Need to generalize this concept.
-       #name = t.iter('{http://www.topografix.com/GPX/1/1}name')
+       #name = tree.iter('{http://www.topografix.com/GPX/1/1}name')
        #if not name:
        #    continue
        #name = next(name)
        #if not name.text.startswith('Running'):
        #    continue
-        for segment in t.iter('{http://www.topografix.com/GPX/1/1}trk'):
+        for segment in tree.iter('{http://www.topografix.com/GPX/1/1}trk'):
             keepevery(segment, args.keepevery)
 
             if args.linearize:
@@ -295,7 +315,7 @@ def main():
                 if master_tree:
                     master_tree.getroot().append(segment)
                 else:
-                    master_tree = t
+                    master_tree = tree
 
     print('total distance {:0.1f} miles'.format(total_distance))
 
