@@ -59,6 +59,19 @@ import argparse
 import math
 import xml.etree.ElementTree
 
+def haversine(lon1, lat1, lon2, lat2):
+    '''Compute great circle distances using the Haversine formulation
+       See: https://medium.com/@petehouston/calculate-distance-of-two-locations-on-earth-using-python-1501b1944d97
+       '''
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+
+    RADIUS_MILES = 3958.756
+    #RADIUS_KILOMETERS = 6371
+    return 2 * RADIUS_MILES * math.asin(math.sqrt(a))
+
 def _remove_all(parent, child):
     '''Function that simply removes the child XML element from the parent.'''
     parent.remove(child)
@@ -73,6 +86,22 @@ def _iterate_over(segment, search, functor):
             result = functor(parent, child)
             if result == False:
                 return
+
+def sum_segment_distance(segment):
+    s = 0
+    last = None
+
+    def _sum_functor(parent, child):
+        nonlocal s, last
+        lat2, lon2 = latlon(child)
+        if last is not None:
+            lat1, lon1 = last
+            s += haversine(lon1, lat1, lon2, lat2)
+        last = (lat2, lon2)
+
+    _iterate_over(segment, 'trkpt', _sum_functor)
+
+    return s
 
 def latlon(waypt):
     return float(waypt.attrib['lat']), float(waypt.attrib['lon'])
@@ -227,6 +256,8 @@ def main():
     # use the first file as the master tree, and append tracks to it
     master_tree = None
 
+    total_distance = 0
+
     for gpx_file in sorted(args.gpxfile):
         t = xml.etree.ElementTree.parse(gpx_file)
 
@@ -239,7 +270,6 @@ def main():
        #name = next(name)
        #if not name.text.startswith('Running'):
        #    continue
-
         for segment in t.iter('{http://www.topografix.com/GPX/1/1}trk'):
             keepevery(segment, args.keepevery)
 
@@ -258,10 +288,15 @@ def main():
                 stripextensions(segment)
 
             if not empty(segment):
+                segment_distance = sum_segment_distance(segment)
+                total_distance += segment_distance
+                print('segment distance', segment_distance)
                 if master_tree:
                     master_tree.getroot().append(segment)
                 else:
                     master_tree = t
+
+    print('total distance', total_distance)
 
     with open(args.out, 'wb') as out:
         master_tree.write(out, xml_declaration=True)
