@@ -85,7 +85,7 @@ def _iterate_over(segment, search, functor):
     tags that have the name "search", and applying "functor" for each match.
 
     If the functor ever returns False, then stop early. '''
-    for parent in segment.getiterator():
+    for parent in segment.iter():
         for child in parent.findall('{http://www.topografix.com/GPX/1/1}' + search):
             result = functor(parent, child)
             if result is False:
